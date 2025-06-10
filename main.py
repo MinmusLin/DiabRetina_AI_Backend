@@ -43,6 +43,7 @@ app = Flask(__name__)
 CORS(app)
 app.config['MAX_CONTENT_LENGTH'] = None
 
+os.makedirs('diagnosis-record', exist_ok=True)
 os.makedirs('diagnostic-report', exist_ok=True)
 os.makedirs('original-image', exist_ok=True)
 os.makedirs('predicted-image', exist_ok=True)
@@ -328,7 +329,8 @@ def generate_report():
         story.append(Paragraph(f"报告编号：{data['uuid']}", styles['Subtitle']))
         now = datetime.now()
         beijing_time = now + timedelta(hours=8)
-        story.append(Paragraph(f"生成时间：{beijing_time.strftime('%Y-%m-%d %H:%M:%S')}", styles['Subtitle']))
+        generate_time = beijing_time.strftime('%Y-%m-%d %H:%M:%S')
+        story.append(Paragraph(f"生成时间：{generate_time}", styles['Subtitle']))
         story.append(Spacer(1, 40))
         story.append(Paragraph('患者基本信息', styles['Section']))
         story.append(Spacer(1, 12))
@@ -465,6 +467,15 @@ def generate_report():
         pdf_link = f"http://110.42.214.164:8005/diagnostic-report/{data['uuid']}"
         story.append(Paragraph(f'报告下载链接：{pdf_link}', ParagraphStyle(name='Footer', fontName='wqy-zenhei', fontSize=9, textColor=colors.grey)))
         doc.build(story)
+        record_path = os.path.join('diagnosis-record', f"{data['uuid']}.txt")
+        with open(record_path, 'w', encoding='utf-8') as f:
+            f.write(f"{data['name']}\n")
+            f.write(f"{data['gender']}\n")
+            f.write(f"{data['age']}\n")
+            f.write(f"{data['occupation']}\n")
+            f.write(f"{data['contact']}\n")
+            f.write(f"{data['address']}\n")
+            f.write(f'{generate_time}\n')
         return jsonify({'report_path': pdf_link})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -481,6 +492,39 @@ def get_report(uuid):
             as_attachment=False,
             download_name=f'diagnostic-report-{uuid}.pdf'
         )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/history', methods=['GET'])
+def get_history():
+    try:
+        record_files = [f for f in os.listdir('diagnosis-record') if f.endswith('.txt')]
+        record_files.sort(key=lambda x: os.path.getmtime(os.path.join('diagnosis-record', x)), reverse=True)
+        history_records = []
+        for filename in record_files:
+            filepath = os.path.join('diagnosis-record', filename)
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f.readlines()]
+                if len(lines) >= 7:
+                    uuid = filename[:-4]
+                    name = lines[0] if len(lines) > 0 else ''
+                    gender = lines[1] if len(lines) > 1 else ''
+                    age = lines[2] if len(lines) > 2 else ''
+                    occupation = lines[3] if len(lines) > 3 else ''
+                    contact = lines[4] if len(lines) > 4 else ''
+                    address = lines[5] if len(lines) > 5 else ''
+                    time = lines[6] if len(lines) > 6 else ''
+                    history_records.append({
+                        'uuid': uuid,
+                        'name': name,
+                        'gender': gender,
+                        'age': age,
+                        'occupation': occupation,
+                        'contact': contact,
+                        'address': address,
+                        'time': time
+                    })
+        return jsonify({'history': history_records})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
