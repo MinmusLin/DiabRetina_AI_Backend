@@ -508,7 +508,6 @@ def get_report(uuid):
 def get_history():
     try:
         record_files = [f for f in os.listdir('diagnosis-record') if f.endswith('.txt')]
-        record_files.sort(key=lambda x: os.path.getmtime(os.path.join('diagnosis-record', x)), reverse=True)
         history_records = []
         for filename in record_files:
             filepath = os.path.join('diagnosis-record', filename)
@@ -533,6 +532,7 @@ def get_history():
                         'address': address,
                         'time': time
                     })
+        history_records.sort(key=lambda x: x['time'], reverse=True)
         return jsonify({'history': history_records})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
