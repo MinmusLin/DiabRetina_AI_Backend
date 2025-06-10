@@ -10,10 +10,13 @@ from collections import OrderedDict
 from nets.Transforms import Resize, CenterCrop, ApplyCLAHE, ToTensor
 from nets.CAUNet import CAUNet
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import io
 import base64
+from scipy import ndimage
 
 app = Flask(__name__)
+CORS(app)
 app.config['MAX_CONTENT_LENGTH'] = None
 
 os.makedirs('original-image', exist_ok=True)
@@ -25,6 +28,13 @@ LESION_COLORS = {
     'MA': (0, 223, 162),
     'HE': (0, 121, 255),
     'SE': (246, 250, 112)
+}
+
+LESION_TYPES = {
+    1: 'EX',
+    2: 'HE',
+    3: 'MA',
+    4: 'SE'
 }
 
 model = CAUNet(3, 5)
@@ -66,7 +76,15 @@ def create_colored_mask(prediction):
     colored_mask[pred_mask == 2] = LESION_COLORS['HE']
     colored_mask[pred_mask == 3] = LESION_COLORS['MA']
     colored_mask[pred_mask == 4] = LESION_COLORS['SE']
-    return colored_mask
+    return colored_mask, pred_mask
+
+def count_lesions(pred_mask):
+    lesion_counts = {'EX': 0, 'HE': 0, 'MA': 0, 'SE': 0}
+    for class_idx, lesion_type in LESION_TYPES.items():
+        binary_mask = (pred_mask == class_idx).astype(np.uint8)
+        _, num_features = ndimage.label(binary_mask)
+        lesion_counts[lesion_type] = num_features
+    return lesion_counts
 
 def predict(model, image_tensor):
     model.eval()
@@ -84,7 +102,9 @@ def process_image(image_path, file_uuid):
     image_tensor, original_img = load_image(image_path)
     image_tensor = image_tensor.to(device)
     prediction = predict(model, image_tensor)
-    colored_mask = create_colored_mask(prediction)
+    colored_mask, pred_mask = create_colored_mask(prediction)
+    lesion_counts = count_lesions(pred_mask)
+
     if isinstance(original_img, torch.Tensor):
         original_img = original_img.cpu().numpy()
     if original_img.shape[0] != 640 or original_img.shape[1] != 640:
@@ -113,7 +133,8 @@ def process_image(image_path, file_uuid):
     return {
         'uuid': file_uuid,
         'preprocessed_image': base64.b64encode(preprocessed_img).decode('utf-8'),
-        'predicted_image': base64.b64encode(predicted_img).decode('utf-8')
+        'predicted_image': base64.b64encode(predicted_img).decode('utf-8'),
+        'lesion_counts': lesion_counts
     }
 
 @app.route('/predict', methods=['POST'])
