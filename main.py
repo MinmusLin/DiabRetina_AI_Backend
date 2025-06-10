@@ -7,7 +7,8 @@ import numpy as np
 import torch
 import SimpleITK as sitk
 import cv2
-from PIL import Image
+from datetime import datetime, timedelta
+from PIL import Image as PILImage
 from torchvision import transforms
 from collections import OrderedDict
 from nets.Transforms import Resize, CenterCrop, ApplyCLAHE, ToTensor
@@ -16,6 +17,15 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from scipy import ndimage
 from dotenv import load_dotenv
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.graphics.shapes import Drawing, Rect
 
 load_dotenv()
 
@@ -24,6 +34,10 @@ VOLCENGINE_API_KEY = os.getenv('VOLCENGINE_API_KEY')
 
 if not VOLCENGINE_API_URL or not VOLCENGINE_API_KEY:
     raise ValueError('Missing required environment variables: VOLCENGINE_API_URL or VOLCENGINE_API_KEY')
+
+pdfmetrics.registerFont(
+    TTFont('wqy-zenhei', '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc')
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -137,13 +151,13 @@ def process_image(image_path, file_uuid):
     overlay[mask] = cv2.addWeighted(original_img[mask], 0.5, colored_mask[mask], 0.5, 0)
     preprocessed_path = os.path.join('preprocessed-image', f'{file_uuid}.jpg')
     predicted_path = os.path.join('predicted-image', f'{file_uuid}.jpg')
-    Image.fromarray(original_img).save(preprocessed_path)
-    Image.fromarray(overlay).save(predicted_path)
+    PILImage.fromarray(original_img).save(preprocessed_path)
+    PILImage.fromarray(overlay).save(predicted_path)
     img_byte_arr = io.BytesIO()
-    Image.fromarray(original_img).save(img_byte_arr, format='JPEG')
+    PILImage.fromarray(original_img).save(img_byte_arr, format='JPEG')
     preprocessed_img = img_byte_arr.getvalue()
     img_byte_arr = io.BytesIO()
-    Image.fromarray(overlay).save(img_byte_arr, format='JPEG')
+    PILImage.fromarray(overlay).save(img_byte_arr, format='JPEG')
     predicted_img = img_byte_arr.getvalue()
     return {
         'uuid': file_uuid,
@@ -262,6 +276,195 @@ def generate_diagnosis():
             return jsonify({'ai_response': 'AI 辅助诊断意见生成失败。'})
         response_data = response.json()
         return jsonify({'ai_response': response_data['choices'][0]['message']['content']})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/generate_report', methods=['POST'])
+def generate_report():
+    try:
+        data = request.json
+        required_fields = [
+            'uuid',
+            'name',
+            'gender',
+            'age',
+            'occupation',
+            'contact',
+            'address',
+            'chief_complaint',
+            'present_illness',
+            'past_history',
+            'ma_count',
+            'he_count',
+            'ex_count',
+            'se_count',
+            'ma_severity',
+            'he_severity',
+            'ex_severity',
+            'se_severity',
+            'clinical_diagnosis',
+            'treatment_plan',
+            'ai_diagnosis'
+        ]
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        pdf_path = os.path.join('diagnostic-report', f"{data['uuid']}.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(name='Center', fontName='wqy-zenhei', alignment=TA_CENTER))
+        styles.add(ParagraphStyle(name='Left', fontName='wqy-zenhei', alignment=TA_LEFT))
+        styles.add(ParagraphStyle(name='Comment', fontName='wqy-zenhei', fontSize=9, alignment=TA_LEFT))
+        styles['Title'].fontSize = 18
+        styles['Title'].alignment = TA_CENTER
+        styles['Title'].spaceAfter = 20
+        styles['Title'].fontName = 'wqy-zenhei'
+        styles.add(ParagraphStyle(name='Subtitle', fontName='wqy-zenhei', fontSize=10, alignment=TA_CENTER, spaceAfter=10))
+        styles.add(ParagraphStyle(name='Section', fontName='wqy-zenhei', fontSize=12, alignment=TA_LEFT, spaceBefore=10, spaceAfter=5))
+        story = []
+        story.append(Paragraph('糖尿病性视网膜病变诊断分析报告', styles['Title']))
+        story.append(Paragraph(f"本报告由糖尿病性视网膜病变诊断智能平台 DiabRetina AI 生成", styles['Subtitle']))
+        story.append(Spacer(1, 16))
+        story.append(Paragraph(f"报告编号：{data['uuid']}", styles['Subtitle']))
+        now = datetime.now()
+        beijing_time = now + timedelta(hours=8)
+        story.append(Paragraph(f"生成时间：{beijing_time.strftime('%Y-%m-%d %H:%M:%S')}", styles['Subtitle']))
+        story.append(Spacer(1, 40))
+        story.append(Paragraph('患者基本信息', styles['Section']))
+        story.append(Spacer(1, 12))
+        patient_data = [
+            ['姓名', data['name']],
+            ['性别', data['gender']],
+            ['年龄', data['age']],
+            ['职业', data['occupation']],
+            ['联系方式', data['contact']],
+            ['家庭住址', data['address']]
+        ]
+        patient_table = Table(patient_data, colWidths=[1.5*inch, 4*inch])
+        patient_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'wqy-zenhei'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey)
+        ]))
+        story.append(patient_table)
+        story.append(Spacer(1, 24))
+        story.append(Paragraph('眼底图像', styles['Section']))
+        story.append(Spacer(1, 12))
+        original_img_path = os.path.join('preprocessed-image', f"{data['uuid']}.jpg")
+        predicted_img_path = os.path.join('predicted-image', f"{data['uuid']}.jpg")
+        img_table_data = [
+            [Paragraph('眼底原始图像', styles['Center']), Paragraph('眼底检测图像', styles['Center'])],
+            [Image(original_img_path, width=3*inch, height=3*inch), Image(predicted_img_path, width=3*inch, height=3*inch)]
+        ]
+        img_table = Table(img_table_data, colWidths=[3.5*inch, 3.5*inch])
+        img_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, 0), 'wqy-zenhei'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEADING', (0, 0), (-1, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+            ('TOPPADDING', (0, 0), (-1, 0), 5),
+            ('BOTTOMPADDING', (1, 0), (1, 0), 0)
+        ]))
+        story.append(img_table)
+        story.append(Spacer(1, 24))
+        story.append(Paragraph('病灶类型说明', styles['Section']))
+        story.append(Spacer(1, 12))
+        lesion_colors = {
+            'MA': (0, 223, 162),
+            'HE': (0, 121, 255),
+            'EX': (255, 0, 96),
+            'SE': (246, 250, 112)
+        }
+        lesion_descriptions = [
+            ('微动脉瘤（Microaneurysm，MA）', '视网膜毛细血管壁局部膨出形成的微小瘤状结构，是糖尿病视网膜病变最早的病理特征。'),
+            ('出血点（Hemorrhage，HE）', '视网膜深层毛细血管破裂导致的点状或片状出血，位于内核层或外丛状层。'),
+            ('硬性渗出（Hard Exudates，EX）', '脂质和蛋白质渗漏沉积于外丛状层，呈蜡黄色点片状，边界清晰，提示慢性视网膜水肿。'),
+            ('软性渗出（Soft Exudates，SE）', '神经纤维层微梗死导致的轴浆蓄积，呈白色絮状、边界模糊，阻碍下方血管观察。')
+        ]
+        lesion_explanation_data = []
+        for i, (title, desc) in enumerate(lesion_descriptions):
+            lesion_type = title.split('（')[-1].split('）')[0].split('，')[-1]
+            color = lesion_colors[lesion_type]
+            d = Drawing(18, 18)
+            d.add(Rect(
+                0, 0, 20, 20,
+                fillColor=colors.Color(color[0]/255, color[1]/255, color[2]/255),
+                strokeColor=colors.lightgrey,
+                strokeWidth=1
+            ))
+            lesion_explanation_data.append([d, Paragraph(f'{title}\n{desc}', styles['Comment'])])
+        lesion_explanation_table = Table(lesion_explanation_data, colWidths=[0.5*inch, 5.5*inch])
+        lesion_explanation_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'wqy-zenhei'),
+            ('FONTSIZE', (0, 0), (-1, 0), 8),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('GRID', (0, 0), (-1, -1), 0, colors.white),
+            ('BOX', (0, 0), (-1, -1), 0, colors.white)
+        ]))
+        story.append(lesion_explanation_table)
+        story.append(Spacer(1, 24))
+        story.append(Paragraph('患者病史信息', styles['Section']))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph('主诉：', styles['Left']))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(data['chief_complaint'], styles['Left']))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph('现病史：', styles['Left']))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(data['present_illness'], styles['Left']))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph('既往史：', styles['Left']))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(data['past_history'], styles['Left']))
+        story.append(Spacer(1, 24))
+        story.append(Paragraph('病灶严重程度分级', styles['Section']))
+        story.append(Spacer(1, 12))
+        lesion_data = [
+            ['病灶类型', '数量', '严重程度分级'],
+            ['微动脉瘤（MA）', data['ma_count'], get_severity_text(data['ma_severity'])],
+            ['出血点（HE）', data['he_count'], get_severity_text(data['he_severity'])],
+            ['硬性渗出（EX）', data['ex_count'], get_severity_text(data['ex_severity'])],
+            ['软性渗出（SE）', data['se_count'], get_severity_text(data['se_severity'])]
+        ]
+        lesion_table = Table(lesion_data, colWidths=[1.5*inch, 1*inch, 3*inch])
+        lesion_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'wqy-zenhei'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey)
+        ]))
+        story.append(lesion_table)
+        story.append(Spacer(1, 8))
+        story.append(Paragraph('根据国际临床 DR 严重程度量表，DR 共分为 5 级：健康、轻度非增殖性 DR（Mild non-proliferative DR，Mild-NPDR）、中度非增殖性 DR（Moderate non-proliferative DR，Moderate-NPDR）、重度非增殖性 DR（Severe non-proliferative DR，Severe-NPDR）和增殖性 DR（Proliferative DR，PDR）。', styles['Comment']))
+        story.append(Spacer(1, 24))
+        story.append(Paragraph('临床诊断意见', styles['Section']))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph(data['clinical_diagnosis'], styles['Left']))
+        story.append(Spacer(1, 24))
+        story.append(Paragraph('治疗方案', styles['Section']))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph(data['treatment_plan'], styles['Left']))
+        story.append(Spacer(1, 24))
+        story.append(Paragraph('AI 辅助诊断意见', styles['Section']))
+        story.append(Spacer(1, 12))
+        ai_diagnosis_paragraphs = data['ai_diagnosis'].split('\n')
+        for para in ai_diagnosis_paragraphs:
+            if para.strip():
+                story.append(Paragraph(para.strip(), styles['Left']))
+                story.append(Spacer(1, 5))
+        story.append(Spacer(1, 48))
+        story.append(Paragraph(f'报告下载链接：{pdf_path}', ParagraphStyle(name='Footer', fontName='wqy-zenhei', fontSize=9, textColor=colors.grey)))
+        doc.build(story)
+        return jsonify({'report_path': pdf_path})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
