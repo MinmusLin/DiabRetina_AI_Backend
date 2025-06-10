@@ -82,8 +82,13 @@ def count_lesions(pred_mask):
     lesion_counts = {'EX': 0, 'HE': 0, 'MA': 0, 'SE': 0}
     for class_idx, lesion_type in LESION_TYPES.items():
         binary_mask = (pred_mask == class_idx).astype(np.uint8)
-        _, num_features = ndimage.label(binary_mask)
-        lesion_counts[lesion_type] = num_features
+        kernel = np.ones((3, 3), np.uint8)
+        binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
+        labeled, num_features = ndimage.label(binary_mask)
+        for i in range(1, num_features + 1):
+            area = np.sum(labeled == i)
+            if area >= 10:
+                lesion_counts[lesion_type] += 1
     return lesion_counts
 
 def predict(model, image_tensor):
