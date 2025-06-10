@@ -13,7 +13,7 @@ from torchvision import transforms
 from collections import OrderedDict
 from nets.Transforms import Resize, CenterCrop, ApplyCLAHE, ToTensor
 from nets.CAUNet import CAUNet
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from scipy import ndimage
 from dotenv import load_dotenv
@@ -323,7 +323,7 @@ def generate_report():
         styles.add(ParagraphStyle(name='Section', fontName='wqy-zenhei', fontSize=12, alignment=TA_LEFT, spaceBefore=10, spaceAfter=5))
         story = []
         story.append(Paragraph('糖尿病性视网膜病变诊断分析报告', styles['Title']))
-        story.append(Paragraph(f"本报告由糖尿病性视网膜病变诊断智能平台 DiabRetina AI 生成", styles['Subtitle']))
+        story.append(Paragraph(f'本报告由糖尿病性视网膜病变诊断智能平台 DiabRetina AI 生成', styles['Subtitle']))
         story.append(Spacer(1, 16))
         story.append(Paragraph(f"报告编号：{data['uuid']}", styles['Subtitle']))
         now = datetime.now()
@@ -462,9 +462,25 @@ def generate_report():
                 story.append(Paragraph(para.strip(), styles['Left']))
                 story.append(Spacer(1, 5))
         story.append(Spacer(1, 48))
-        story.append(Paragraph(f'报告下载链接：{pdf_path}', ParagraphStyle(name='Footer', fontName='wqy-zenhei', fontSize=9, textColor=colors.grey)))
+        pdf_link = f"http://110.42.214.164:8005/diagnostic-report/{data['uuid']}"
+        story.append(Paragraph(f'报告下载链接：{pdf_link}', ParagraphStyle(name='Footer', fontName='wqy-zenhei', fontSize=9, textColor=colors.grey)))
         doc.build(story)
-        return jsonify({'report_path': pdf_path})
+        return jsonify({'report_path': pdf_link})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/diagnostic-report/<uuid>', methods=['GET'])
+def get_report(uuid):
+    try:
+        pdf_path = os.path.join('diagnostic-report', f'{uuid}.pdf')
+        if not os.path.exists(pdf_path):
+            return jsonify({'error': 'Diagnostic report not found'}), 404
+        return send_file(
+            pdf_path,
+            mimetype='application/pdf',
+            as_attachment=False,
+            download_name=f'diagnostic-report-{uuid}.pdf'
+        )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
