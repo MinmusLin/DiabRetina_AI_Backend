@@ -185,10 +185,19 @@ def handle_prediction():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
     file_uuid = str(uuid.uuid4())
-    filename = f'{file_uuid}.jpg'
-    filepath = os.path.join('original-image', filename)
     try:
-        file.save(filepath)
+        img = PILImage.open(file.stream)
+        if img.format == 'PNG':
+            background = PILImage.new('RGB', img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
+            img = background
+            filename = f'{file_uuid}.jpg'
+            filepath = os.path.join('original-image', filename)
+            img.save(filepath, 'JPEG')
+        else:
+            filename = f'{file_uuid}.jpg'
+            filepath = os.path.join('original-image', filename)
+            img.save(filepath)
         result = process_image(filepath, file_uuid)
         return jsonify(result)
     except Exception as e:
